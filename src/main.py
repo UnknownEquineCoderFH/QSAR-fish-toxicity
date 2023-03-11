@@ -9,15 +9,19 @@ import numpy as np
 import sklearn.model_selection as sk
 import sklearn.linear_model as lm
 from sklearn.metrics import (
-    mean_absolute_error,
-    mean_squared_error,
-    mean_absolute_percentage_error,
+    mean_absolute_error as mae,
+    mean_squared_error as mse,
+    mean_absolute_percentage_error as mape,
 )
 import plotly.offline as plt
 import plotly.express as px
 
 
 class Columns(StrEnum):
+    """
+    The columns in the dataset.
+    """
+
     INFORMATION_INDICES = "CIC0"
     MATRIX_DESCRIPTORS = "SM1_Dz(Z)"
     AUTOCORRELATION = "GATS1i"
@@ -49,6 +53,14 @@ def split(
     df: pl.DataFrame,
     ratio: float = 0.1,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """
+    Splits the data into a training and test set.
+
+    The test set is 10% of the data. (by default)
+
+    Returns a tuple of four dataframes, the first two are the training set and the last two are the test set.
+    """
+
     return sk.train_test_split(
         df.select(
             Columns.INFORMATION_INDICES,
@@ -58,28 +70,7 @@ def split(
         ),
         df.select(Columns.QUANTITATIVE_RESPONSE),
         test_size=ratio,
-    )
-
-
-def mae(y_true: np.ndarray, y_pred: np.ndarray) -> np.floating:
-    """
-    Computes the mean absolute error.
-    """
-    return mean_absolute_error(y_true, y_pred)
-
-
-def rmse(y_true: np.ndarray, y_pred: np.ndarray) -> np.floating:
-    """
-    Computes the root mean squared error.
-    """
-    return np.sqrt(mean_squared_error(y_true, y_pred))
-
-
-def mape(y_true: np.ndarray, y_pred: np.ndarray) -> np.floating:
-    """
-    Computes the mean absolute percentage error.
-    """
-    return mean_absolute_percentage_error(y_true, y_pred)
+    )  # type: ignore
 
 
 def polynomial_model(
@@ -99,20 +90,32 @@ def polynomial_model(
 
 
 class Errors(NamedTuple):
+    """
+    Errors computed from a linear regression.
+    """
+
     mae: np.floating
     rmse: np.floating
     mape: np.floating
 
 
-def errors(y_true: np.ndarray, y_pred: np.ndarray) -> Errors:
+def errors(real: np.ndarray, predicted: np.ndarray) -> Errors:
+    """
+    Computes the errors for the given real and predicted values.
+    """
+
     return Errors(
-        mae=mae(y_true, y_pred),
-        rmse=rmse(y_true, y_pred),
-        mape=mape(y_true, y_pred),
+        mae=mae(real, predicted),
+        rmse=np.sqrt(mse(real, predicted)),
+        mape=mape(real, predicted),
     )
 
 
 class Summary(NamedTuple):
+    """
+    A summary of the errors for the train and test set.
+    """
+
     train: Errors
     test: Errors
 
@@ -125,16 +128,16 @@ def summary(
     y_test: pl.DataFrame,
 ) -> Summary:
     """
-    Computes the errors for the given model.
+    Computes the errors for the given model and produces a Summary.
     """
     return Summary(
         train=errors(
-            y_pred=model.predict(x_train.to_numpy()),
-            y_true=y_train.to_numpy(),
+            predicted=model.predict(x_train.to_numpy()),
+            real=y_train.to_numpy(),
         ),
         test=errors(
-            y_pred=model.predict(x_test.to_numpy()),
-            y_true=y_test.to_numpy(),
+            predicted=model.predict(x_test.to_numpy()),
+            real=y_test.to_numpy(),
         ),
     )
 
@@ -143,7 +146,7 @@ def plot(summaries: list[Summary]) -> None:
     """
     Plot how the MAE changes by increasing the complexity of the model.
 
-    Plot two lines one the same graph, one for test (blue) and one for train (orange).
+    Plots two lines one the same graph, one for test (green) and one for train (orange).
     """
 
     fig = px.line(
@@ -171,17 +174,17 @@ def plot(summaries: list[Summary]) -> None:
 
 
 def main() -> int:
-    q = query()
+    # Generate the training and test set.
+    x_train, x_test, y_train, y_test = split(query().collect())
 
-    x_train, x_test, y_train, y_test = split(q.collect())
-
-    # Train a linear regression model that tries to predict the quantitative response based on the information indices.
+    # 1-D Linear regression model: information indices to quantitative response.
     model = polynomial_model(
         x_train.select(Columns.INFORMATION_INDICES),
         y_train.select(Columns.QUANTITATIVE_RESPONSE),
         linear=True,
     )
 
+    # Compute the errors for the train and test set.
     one_d_summary = summary(
         model,
         x_train.select(Columns.INFORMATION_INDICES),
@@ -190,14 +193,16 @@ def main() -> int:
         y_test.select(Columns.QUANTITATIVE_RESPONSE),
     )
 
+    # Log the errors.
     print(f"Summary for one dimension: {one_d_summary}")
 
-    # Train a linear regression model that tries to predict the quantitative response based on the information indice and matrix descriptors.
+    # 2-D Linear regression model: information indices and matrix descriptors to quantitative response.
     model = polynomial_model(
         x_train.select(Columns.INFORMATION_INDICES, Columns.MATRIX_DESCRIPTORS),
         y_train.select(Columns.QUANTITATIVE_RESPONSE),
     )
 
+    # Compute the errors for the train and test set.
     two_d_summary = summary(
         model,
         x_train.select(Columns.INFORMATION_INDICES, Columns.MATRIX_DESCRIPTORS),
@@ -206,10 +211,11 @@ def main() -> int:
         y_test.select(Columns.QUANTITATIVE_RESPONSE),
     )
 
+    # Log the errors.
     print(f"Summary for two dimensions: {two_d_summary}")
 
-    # Train a linear regression model that tries to predict the quantitative response based on the information indice, matrix descriptors and autocorrelation.
-
+    # 3-D Linear regression model: information indices, matrix descriptors and autocorrelation
+    # to quantitative response.
     model = polynomial_model(
         x_train.select(
             Columns.INFORMATION_INDICES,
@@ -219,6 +225,7 @@ def main() -> int:
         y_train.select(Columns.QUANTITATIVE_RESPONSE),
     )
 
+    # Compute the errors for the train and test set.
     three_d_summary = summary(
         model,
         x_train.select(
@@ -235,10 +242,11 @@ def main() -> int:
         y_test.select(Columns.QUANTITATIVE_RESPONSE),
     )
 
+    # Log the errors.
     print(f"Summary for three dimensions: {three_d_summary}")
 
-    # Train a linear regression model that tries to predict the quantitative response based on the information indice, matrix descriptors, autocorrelation and molecular properties.
-
+    # 4-D Linear regression model: information indices, matrix descriptors,
+    # autocorrelation and molecular properties to quantitative response.
     model = polynomial_model(
         x_train.select(
             Columns.INFORMATION_INDICES,
@@ -249,6 +257,7 @@ def main() -> int:
         y_train.select(Columns.QUANTITATIVE_RESPONSE),
     )
 
+    # Compute the errors for the train and test set.
     four_d_summary = summary(
         model,
         x_train.select(
@@ -267,8 +276,10 @@ def main() -> int:
         y_test.select(Columns.QUANTITATIVE_RESPONSE),
     )
 
+    # Log the errors.
     print(f"Summary for four dimensions: {four_d_summary}")
 
+    # Plot the errors.
     plot([one_d_summary, two_d_summary, three_d_summary, four_d_summary])
 
     return 0
